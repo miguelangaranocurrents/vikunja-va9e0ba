@@ -38,7 +38,36 @@ import type {TaskAttachment as IAttachment} from '@/client/generated'
 import {fetchAttachmentUrl, releaseAttachmentUrl} from '@/helpers/attachments'
 import {getApiRootUrl} from '@/helpers/apiUrl'
 
-type ImageNodeKey = `${ITask['id']}-${IAttachment['id']}`
+// Plain-text copy that keeps list markers (the default serializer drops them).
+function serializeBlocks(content: Fragment, indent = ''): string {
+	const parts: string[] = []
+	content.forEach(node => {
+		const name = node.type.name
+		if (name === 'bulletList' || name === 'orderedList' || name === 'taskList') {
+			const lines: string[] = []
+			let n = node.attrs.start ?? 1
+			node.forEach(item => {
+				const marker = name === 'orderedList'
+					? `${n++}. `
+					: name === 'taskList'
+						? `- [${item.attrs.checked ? 'x' : ' '}] `
+						: '- '
+				const inner = serializeBlocks(item.content, indent + ' '.repeat(marker.length))
+				lines.push(indent + marker + inner.slice(indent.length + marker.length))
+			})
+			parts.push(lines.join('\n'))
+		} else if (node.isTextblock) {
+			parts.push(indent + node.textBetween(0, node.content.size, '\n', leaf => leaf.type.spec.leafText?.(leaf) ?? ''))
+		} else if (node.childCount > 0) {
+			parts.push(serializeBlocks(node.content, indent))
+		} else {
+			parts.push(indent + node.textContent)
+		}
+	})
+	return parts.join(indent ? '\n' : '\n\n')
+}
+
+type ImageNodeKey =`${ITask['id']}-${IAttachment['id']}`
 
 // stored srcs predate the v2 flip, so the version segment is matched, not compared
 const ATTACHMENT_URL = /^(.*?)(?:\/api\/v[12])?\/tasks\/(\d+)\/attachments\/(\d+)$/
@@ -233,6 +262,7 @@ export function createEditorExtensions(deps: EditorExtensionDeps): Extensions {
 					props: {
 						clipboardParser: createClipboardParser(this.editor.schema),
 						transformPasted: slice => repairSliceContent(slice),
+						clipboardTextSerializer: slice => serializeBlocks(slice.content),
 
 						handlePaste: (view, event) => {
 
